@@ -90,6 +90,13 @@ public enum SinkType implements ComponentWithClassName {
   HBASE("org.apache.flume.sink.hbase.HBaseSink"),
 
   /**
+   * HBase2 sink
+   *
+   * @see org.apache.flume.sink.hbase2.HBase2Sink
+   */
+  HBASE2("org.apache.flume.sink.hbase2.HBase2Sink"),
+
+  /**
    * AsyncHBase sink
    *
    * @see org.apache.flume.sink.hbase.AsyncHBaseSink
