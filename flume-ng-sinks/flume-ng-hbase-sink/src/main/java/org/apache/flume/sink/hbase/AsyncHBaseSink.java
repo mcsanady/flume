@@ -332,7 +332,8 @@ public class AsyncHBaseSink extends AbstractSink implements Configurable {
   public void configure(Context context) {
     if (!HBaseVersionCheck.hasVersionLessThan2(logger)) {
       throw new ConfigurationException(
-              "HBase major version number must be less than 2 for asynchbase sink. ");
+              "HBase major version number must be less than 2 for asynchbase sink. " +
+              "Use hbase2-sink instead.");
     }
     tableName = context.getString(HBaseSinkConfigurationConstants.CONFIG_TABLE);
     String cf = context.getString(

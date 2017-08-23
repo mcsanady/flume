@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.flume.sink.hbase;
+package org.apache.flume.sink.hbase2;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Charsets;
@@ -40,20 +40,24 @@ import org.apache.flume.sink.AbstractSink;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.TableName;
+import org.apache.hadoop.hbase.client.BufferedMutator;
+import org.apache.hadoop.hbase.client.Connection;
+import org.apache.hadoop.hbase.client.ConnectionFactory;
 import org.apache.hadoop.hbase.client.Durability;
-import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Increment;
 import org.apache.hadoop.hbase.client.Mutation;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Row;
+import org.apache.hadoop.hbase.client.Table;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.VersionInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.security.PrivilegedExceptionAction;
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -92,38 +96,36 @@ import java.util.NavigableMap;
  * multiple increments are returned by the serializer, then HBase failure
  * will cause them to be re-written, when HBase comes back up.
  */
-public class HBaseSink extends AbstractSink implements Configurable {
+public class HBase2Sink extends AbstractSink implements Configurable {
   private String tableName;
   private byte[] columnFamily;
-  private HTable table;
+  private Connection conn;
+  private BufferedMutator table;
   private long batchSize;
-  private Configuration config;
-  private static final Logger logger = LoggerFactory.getLogger(HBaseSink.class);
+  private final Configuration config;
+  private static final Logger logger = LoggerFactory.getLogger(HBase2Sink.class);
   private HbaseEventSerializer serializer;
-  private String eventSerializerType;
-  private Context serializerContext;
   private String kerberosPrincipal;
   private String kerberosKeytab;
   private boolean enableWal = true;
   private boolean batchIncrements = false;
-  private Method refGetFamilyMap = null;
   private SinkCounter sinkCounter;
   private PrivilegedExecutor privilegedExecutor;
 
   // Internal hooks used for unit testing.
   private DebugIncrementsCallback debugIncrCallback = null;
 
-  public HBaseSink() {
+  public HBase2Sink() {
     this(HBaseConfiguration.create());
   }
 
-  public HBaseSink(Configuration conf) {
+  public HBase2Sink(Configuration conf) {
     this.config = conf;
   }
 
   @VisibleForTesting
   @InterfaceAudience.Private
-  HBaseSink(Configuration conf, DebugIncrementsCallback cb) {
+  HBase2Sink(Configuration conf, DebugIncrementsCallback cb) {
     this(conf);
     this.debugIncrCallback = cb;
   }
@@ -141,16 +143,14 @@ public class HBaseSink extends AbstractSink implements Configurable {
           + "provided credentials.", ex);
     }
     try {
-      table = privilegedExecutor.execute(new PrivilegedExceptionAction<HTable>() {
-        @Override
-        public HTable run() throws Exception {
-          HTable table = new HTable(config, tableName);
-          table.setAutoFlush(false);
-          // Flush is controlled by us. This ensures that HBase changing
-          // their criteria for flushing does not change how we flush.
-          return table;
-        }
+      conn = privilegedExecutor.execute((PrivilegedExceptionAction<Connection>) () -> {
+        conn = ConnectionFactory.createConnection(config);
+        return conn;
       });
+      // Flush is controlled by us. This ensures that HBase changing
+      // their criteria for flushing does not change how we flush.
+      table = conn.getBufferedMutator(TableName.valueOf(tableName));
+
     } catch (Exception e) {
       sinkCounter.incrementConnectionFailedCount();
       logger.error("Could not load table, " + tableName +
@@ -159,10 +159,15 @@ public class HBaseSink extends AbstractSink implements Configurable {
           " from HBase", e);
     }
     try {
-      if (!privilegedExecutor.execute(new PrivilegedExceptionAction<Boolean>() {
-        @Override
-        public Boolean run() throws IOException {
-          return table.getTableDescriptor().hasFamily(columnFamily);
+      if (!privilegedExecutor.execute((PrivilegedExceptionAction<Boolean>) () -> {
+        Table t = null;
+        try {
+          t = conn.getTable(TableName.valueOf(tableName));
+          return t.getTableDescriptor().hasFamily(columnFamily);
+        } finally {
+          if (t != null) {
+            t.close();
+          }
         }
       })) {
         throw new IOException("Table " + tableName
@@ -193,6 +198,14 @@ public class HBaseSink extends AbstractSink implements Configurable {
     } catch (IOException e) {
       throw new FlumeException("Error closing table.", e);
     }
+    try {
+      if (conn != null) {
+        conn.close();
+      }
+      conn = null;
+    } catch (IOException e) {
+      throw new FlumeException("Error closing connection.", e);
+    }
     sinkCounter.incrementConnectionClosedCount();
     sinkCounter.stop();
   }
@@ -200,20 +213,20 @@ public class HBaseSink extends AbstractSink implements Configurable {
   @SuppressWarnings("unchecked")
   @Override
   public void configure(Context context) {
-    if (!HBaseVersionCheck.hasVersionLessThan2(logger)) {
+    if (!this.hasVersionAtLeast2()) {
       throw new ConfigurationException(
-              "HBase major version number must be less than 2 for hbase-sink. " +
-              "Use hbase2-sink instead.");
+              "HBase major version number must be at least 2 for hbase2sink");
     }
+
     tableName = context.getString(HBaseSinkConfigurationConstants.CONFIG_TABLE);
     String cf = context.getString(
         HBaseSinkConfigurationConstants.CONFIG_COLUMN_FAMILY);
     batchSize = context.getLong(
-        HBaseSinkConfigurationConstants.CONFIG_BATCHSIZE, new Long(100));
-    serializerContext = new Context();
+        HBaseSinkConfigurationConstants.CONFIG_BATCHSIZE, 100L);
+    Context serializerContext = new Context();
     //If not specified, will use HBase defaults.
-    eventSerializerType = context.getString(
-        HBaseSinkConfigurationConstants.CONFIG_SERIALIZER);
+    String eventSerializerType = context.getString(
+            HBaseSinkConfigurationConstants.CONFIG_SERIALIZER);
     Preconditions.checkNotNull(tableName,
         "Table name cannot be empty, please specify in configuration file");
     Preconditions.checkNotNull(cf,
@@ -221,7 +234,7 @@ public class HBaseSink extends AbstractSink implements Configurable {
     //Check foe event serializer, if null set event serializer type
     if (eventSerializerType == null || eventSerializerType.isEmpty()) {
       eventSerializerType =
-          "org.apache.flume.sink.hbase.SimpleHbaseEventSerializer";
+          "org.apache.flume.sink.hbase2.SimpleHbaseEventSerializer";
       logger.info("No serializer defined, Will use default");
     }
     serializerContext.putAll(context.getSubProperties(
@@ -256,13 +269,12 @@ public class HBaseSink extends AbstractSink implements Configurable {
     if (batchIncrements) {
       logger.info("Increment coalescing is enabled. Increments will be " +
           "buffered.");
-      refGetFamilyMap = reflectLookupGetFamilyMap();
     }
 
     String zkQuorum = context.getString(HBaseSinkConfigurationConstants
         .ZK_QUORUM);
     Integer port = null;
-    /**
+    /*
      * HBase allows multiple nodes in the quorum, but all need to use the
      * same client port. So get the nodes in host:port format,
      * and ignore the ports for all nodes except the first one. If no port is
@@ -314,8 +326,8 @@ public class HBaseSink extends AbstractSink implements Configurable {
     Status status = Status.READY;
     Channel channel = getChannel();
     Transaction txn = channel.getTransaction();
-    List<Row> actions = new LinkedList<Row>();
-    List<Increment> incs = new LinkedList<Increment>();
+    List<Row> actions = new LinkedList<>();
+    List<Increment> incs = new LinkedList<>();
     try {
       txn.begin();
 
@@ -375,98 +387,58 @@ public class HBaseSink extends AbstractSink implements Configurable {
   private void putEventsAndCommit(final List<Row> actions,
                                   final List<Increment> incs, Transaction txn) throws Exception {
 
-    privilegedExecutor.execute(new PrivilegedExceptionAction<Void>() {
-      @Override
-      public Void run() throws Exception {
-        for (Row r : actions) {
-          if (r instanceof Put) {
-            ((Put) r).setDurability(enableWal ? Durability.USE_DEFAULT : Durability.SKIP_WAL);
-          }
-          // Newer versions of HBase - Increment implements Row.
-          if (r instanceof Increment) {
-            ((Mutation) r).setDurability(enableWal ? Durability.USE_DEFAULT : Durability.SKIP_WAL);
-          }
+    privilegedExecutor.execute((PrivilegedExceptionAction<Void>) () -> {
+      final List<Mutation> mutations = new ArrayList<>(actions.size());
+      for (Row r : actions) {
+        if (r instanceof Put) {
+          ((Put) r).setDurability(enableWal ? Durability.USE_DEFAULT : Durability.SKIP_WAL);
         }
-        table.batch(actions);
-        return null;
+        // Newer versions of HBase - Increment implements Row.
+        if (r instanceof Increment) {
+          ((Increment) r).setDurability(enableWal ? Durability.USE_DEFAULT : Durability.SKIP_WAL);
+        }
+        if (r instanceof Mutation) {
+          mutations.add((Mutation)r);
+        } else {
+          logger.warn("dropping row " + r + " since it is not an Increment or Put");
+        }
       }
+      table.mutate(mutations);
+      table.flush();
+      return null;
     });
 
-    privilegedExecutor.execute(new PrivilegedExceptionAction<Void>() {
-      @Override
-      public Void run() throws Exception {
+    privilegedExecutor.execute((PrivilegedExceptionAction<Void>) () -> {
 
-        List<Increment> processedIncrements;
-        if (batchIncrements) {
-          processedIncrements = coalesceIncrements(incs);
-        } else {
-          processedIncrements = incs;
-        }
-
-        // Only used for unit testing.
-        if (debugIncrCallback != null) {
-          debugIncrCallback.onAfterCoalesce(processedIncrements);
-        }
-
-        for (final Increment i : processedIncrements) {
-          i.setWriteToWAL(enableWal);
-          table.increment(i);
-        }
-        return null;
+      List<Increment> processedIncrements;
+      if (batchIncrements) {
+        processedIncrements = coalesceIncrements(incs);
+      } else {
+        processedIncrements = incs;
       }
+
+      // Only used for unit testing.
+      if (debugIncrCallback != null) {
+        debugIncrCallback.onAfterCoalesce(processedIncrements);
+      }
+
+      for (final Increment i : processedIncrements) {
+        i.setDurability(enableWal ? Durability.USE_DEFAULT : Durability.SKIP_WAL);
+        table.mutate(i);
+      }
+      table.flush();
+      return null;
     });
 
     txn.commit();
     sinkCounter.addToEventDrainSuccessCount(actions.size());
   }
 
-  /**
-   * The method getFamilyMap() is no longer available in Hbase 0.96.
-   * We must use reflection to determine which version we may use.
-   */
-  @VisibleForTesting
-  static Method reflectLookupGetFamilyMap() {
-    Method m = null;
-    String[] methodNames = {"getFamilyMapOfLongs", "getFamilyMap"};
-    for (String methodName : methodNames) {
-      try {
-        m = Increment.class.getMethod(methodName);
-        if (m != null && m.getReturnType().equals(Map.class)) {
-          logger.debug("Using Increment.{} for coalesce", methodName);
-          break;
-        }
-      } catch (NoSuchMethodException e) {
-        logger.debug("Increment.{} does not exist. Exception follows.",
-            methodName, e);
-      } catch (SecurityException e) {
-        logger.debug("No access to Increment.{}; Exception follows.",
-            methodName, e);
-      }
-    }
-    if (m == null) {
-      throw new UnsupportedOperationException(
-          "Cannot find Increment.getFamilyMap()");
-    }
-    return m;
-  }
 
   @SuppressWarnings("unchecked")
   private Map<byte[], NavigableMap<byte[], Long>> getFamilyMap(Increment inc) {
-    Preconditions.checkNotNull(refGetFamilyMap,
-        "Increment.getFamilymap() not found");
     Preconditions.checkNotNull(inc, "Increment required");
-    Map<byte[], NavigableMap<byte[], Long>> familyMap = null;
-    try {
-      Object familyObj = refGetFamilyMap.invoke(inc);
-      familyMap = (Map<byte[], NavigableMap<byte[], Long>>) familyObj;
-    } catch (IllegalAccessException e) {
-      logger.warn("Unexpected error calling getFamilyMap()", e);
-      Throwables.propagate(e);
-    } catch (InvocationTargetException e) {
-      logger.warn("Unexpected error calling getFamilyMap()", e);
-      Throwables.propagate(e);
-    }
-    return familyMap;
+    return inc.getFamilyMapOfLongs();
   }
 
   /**
@@ -480,7 +452,7 @@ public class HBaseSink extends AbstractSink implements Configurable {
     Preconditions.checkNotNull(incs, "List of Increments must not be null");
     // Aggregate all of the increment row/family/column counts.
     // The nested map is keyed like this: {row, family, qualifier} => count.
-    Map<byte[], Map<byte[], NavigableMap<byte[], Long>>> counters =
+    Map<byte[], Map<byte[], NavigableMap<byte[], Long>>> counters = 
         Maps.newTreeMap(Bytes.BYTES_COMPARATOR);
     for (Increment inc : incs) {
       byte[] row = inc.getRow();
@@ -532,26 +504,35 @@ public class HBaseSink extends AbstractSink implements Configurable {
       Map<byte[], Map<byte[], NavigableMap<byte[], Long>>> counters,
       byte[] row, byte[] family, byte[] qualifier, Long count) {
 
-    Map<byte[], NavigableMap<byte[], Long>> families = counters.get(row);
-    if (families == null) {
-      families = Maps.newTreeMap(Bytes.BYTES_COMPARATOR);
-      counters.put(row, families);
-    }
+    Map<byte[], NavigableMap<byte[], Long>> families =
+            counters.computeIfAbsent(row, k -> Maps.newTreeMap(Bytes.BYTES_COMPARATOR));
 
-    NavigableMap<byte[], Long> qualifiers = families.get(family);
-    if (qualifiers == null) {
-      qualifiers = Maps.newTreeMap(Bytes.BYTES_COMPARATOR);
-      families.put(family, qualifiers);
-    }
+    NavigableMap<byte[], Long> qualifiers =
+            families.computeIfAbsent(family, k -> Maps.newTreeMap(Bytes.BYTES_COMPARATOR));
 
-    Long existingValue = qualifiers.get(qualifier);
-    if (existingValue == null) {
-      qualifiers.put(qualifier, count);
-    } else {
-      qualifiers.put(qualifier, existingValue + count);
-    }
+    qualifiers.merge(qualifier, count, (a, b) -> a + b);
   }
 
+  String getHBbaseVersionString() {
+    return VersionInfo.getVersion();
+  }
+
+  private int getMajorVersion(String version) throws NumberFormatException {
+    return Integer.parseInt(version.split("\\.")[0]);
+  }
+
+  private boolean hasVersionAtLeast2() {
+    String version = getHBbaseVersionString();
+    try {
+      if (this.getMajorVersion(version) >= 2) {
+        return true;
+      }
+    } catch (NumberFormatException ex) {
+      logger.error(ex.getMessage());
+    }
+    logger.error("Invalid HBase version for hbase2sink:" + version);
+    return false;
+  }
 
   @VisibleForTesting
   @InterfaceAudience.Private
@@ -562,6 +543,6 @@ public class HBaseSink extends AbstractSink implements Configurable {
   @VisibleForTesting
   @InterfaceAudience.Private
   interface DebugIncrementsCallback {
-    public void onAfterCoalesce(Iterable<Increment> increments);
+    void onAfterCoalesce(Iterable<Increment> increments);
   }
 }

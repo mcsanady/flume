@@ -142,6 +142,13 @@ public class SinkConfiguration extends ComponentConfiguration {
     ASYNCHBASE("org.apache.flume.sink.hbase.HBaseSinkConfiguration"),
 
     /**
+     * HBase Sink
+     *
+     * @see org.apache.flume.sink.hbase.HBaseSink
+     */
+    HBASE2("org.apache.flume.sink.hbase2.HBaseSinkConfiguration"),
+
+    /**
      * MorphlineSolr sink
      *
      * @see org.apache.flume.sink.solr.morphline.MorphlineSolrSink
