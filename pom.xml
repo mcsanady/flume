@@ -822,6 +822,9 @@ limitations under the License.
           <artifactId>maven-surefire-plugin</artifactId>
           <version>${mvn-surefire-plugin-old.version}</version>
           <configuration>
+            <systemPropertyVariables>
+              <org.apache.hadoop.hbase.shaded.io.netty.packagePrefix>org.apache.hadoop.hbase.shaded.</org.apache.hadoop.hbase.shaded.io.netty.packagePrefix>
+            </systemPropertyVariables>
             <forkMode>always</forkMode>
             <forkedProcessTimeoutInSeconds>900</forkedProcessTimeoutInSeconds>
             <redirectTestOutputToFile>true</redirectTestOutputToFile>
