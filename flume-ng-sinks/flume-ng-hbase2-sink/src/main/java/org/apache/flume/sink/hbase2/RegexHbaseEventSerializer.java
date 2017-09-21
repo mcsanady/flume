@@ -142,18 +142,18 @@ public class RegexHbaseEventSerializer implements HbaseEventSerializer {
    */
   protected byte[] getRowKey(Calendar cal) {
     /* NOTE: This key generation strategy has the following properties:
-     * 
+     *
      * 1) Within a single JVM, the same row key will never be duplicated.
      * 2) Amongst any two JVM's operating at different time periods (according
-     *    to their respective clocks), the same row key will never be 
+     *    to their respective clocks), the same row key will never be
      *    duplicated.
      * 3) Amongst any two JVM's operating concurrently (according to their
      *    respective clocks), the odds of duplicating a row-key are non-zero
-     *    but infinitesimal. This would require simultaneous collision in (a) 
+     *    but infinitesimal. This would require simultaneous collision in (a)
      *    the timestamp (b) the respective nonce and (c) the random string.
      *    The string is necessary since (a) and (b) could collide if a fleet
      *    of Flume agents are restarted in tandem.
-     *    
+     *
      *  Row-key uniqueness is important because conflicting row-keys will cause
      *  data loss. */
     String rowKey = String.format("%s-%s-%s", cal.getTimeInMillis(),

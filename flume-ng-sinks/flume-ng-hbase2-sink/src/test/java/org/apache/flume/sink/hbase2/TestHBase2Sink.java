@@ -682,7 +682,7 @@ public class TestHBase2Sink {
     Context ctx = getContextWithoutIncrementHBaseSerializer();
     HBase2Sink sink = mock(HBase2Sink.class);
     doCallRealMethod().when(sink).configure(any());
-    when(sink.getHBbaseVersionString()).thenReturn("1.0.0");
+    when(sink.getHBaseVersionString()).thenReturn("1.0.0");
     Configurables.configure(sink, ctx);
   }
 
@@ -691,7 +691,7 @@ public class TestHBase2Sink {
     Context ctx = getContextWithoutIncrementHBaseSerializer();
     HBase2Sink sink = mock(HBase2Sink.class);
     doCallRealMethod().when(sink).configure(any());
-    when(sink.getHBbaseVersionString()).thenReturn("Dummy text");
+    when(sink.getHBaseVersionString()).thenReturn("Dummy text");
     Configurables.configure(sink, ctx);
   }
 

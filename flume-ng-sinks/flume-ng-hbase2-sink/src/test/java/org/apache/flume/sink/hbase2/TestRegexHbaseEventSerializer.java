@@ -58,17 +58,17 @@ public class TestRegexHbaseEventSerializer {
     assertTrue(actions.size() == 1);
     assertTrue(actions.get(0) instanceof Put);
     Put put = (Put) actions.get(0);
-    
+
     assertTrue(put.getFamilyCellMap().containsKey(s.cf));
     List<Cell> cells = put.getFamilyCellMap().get(s.cf);
     assertTrue(cells.size() == 1);
-    
+
     Map<String, String> resultMap = Maps.newHashMap();
     for (Cell cell : cells) {
       resultMap.put(new String(CellUtil.cloneQualifier(cell)),
           new String(CellUtil.cloneValue(cell)));
     }
-    
+
     assertTrue(resultMap.containsKey(
         RegexHbaseEventSerializer.COLUMN_NAME_DEFAULT));
     assertEquals("The sky is falling!",
@@ -120,18 +120,18 @@ public class TestRegexHbaseEventSerializer {
         "\"GET /wp-admin/css/install.css HTTP/1.0\" 200 813 " +
         "\"http://www.cloudera.com/wp-admin/install.php\" \"Mozilla/5.0 (comp" +
         "atible; Yahoo! Slurp; http://help.yahoo.com/help/us/ysearch/slurp)\"";
-    
+
     Event e = EventBuilder.withBody(Bytes.toBytes(logMsg));
     s.initialize(e, "CF".getBytes());
     List<Row> actions = s.getActions();
     assertEquals(1, s.getActions().size());
     assertTrue(actions.get(0) instanceof Put);
-    
+
     Put put = (Put) actions.get(0);
     assertTrue(put.getFamilyCellMap().containsKey(s.cf));
     List<Cell> cells = put.getFamilyCellMap().get(s.cf);
     assertTrue(cells.size() == 11);
-    
+
     Map<String, String> resultMap = Maps.newHashMap();
     for (Cell cell : cells) {
       resultMap.put(new String(CellUtil.cloneQualifier(cell)),
@@ -147,16 +147,16 @@ public class TestRegexHbaseEventSerializer {
     assertEquals("HTTP/1.0", resultMap.get("protocol"));
     assertEquals("200", resultMap.get("status"));
     assertEquals("813", resultMap.get("size"));
-    assertEquals("\"http://www.cloudera.com/wp-admin/install.php\"", 
+    assertEquals("\"http://www.cloudera.com/wp-admin/install.php\"",
         resultMap.get("referer"));
     assertEquals("\"Mozilla/5.0 (compatible; Yahoo! Slurp; " +
-        "http://help.yahoo.com/help/us/ysearch/slurp)\"", 
+        "http://help.yahoo.com/help/us/ysearch/slurp)\"",
         resultMap.get("agent"));
-    
+
     List<Increment> increments = s.getIncrements();
     assertEquals(0, increments.size());
   }
-  
+
   @Test
   public void testRowKeyGeneration() {
     Context context = new Context();
@@ -164,32 +164,32 @@ public class TestRegexHbaseEventSerializer {
     s1.configure(context);
     RegexHbaseEventSerializer s2 = new RegexHbaseEventSerializer();
     s2.configure(context);
-    
+
     // Reset shared nonce to zero
     RegexHbaseEventSerializer.nonce.set(0);
     String randomString = RegexHbaseEventSerializer.randomKey;
-    
+
     Event e1 = EventBuilder.withBody(Bytes.toBytes("body"));
     Event e2 = EventBuilder.withBody(Bytes.toBytes("body"));
     Event e3 = EventBuilder.withBody(Bytes.toBytes("body"));
 
     Calendar cal = mock(Calendar.class);
     when(cal.getTimeInMillis()).thenReturn(1L);
-    
+
     s1.initialize(e1, "CF".getBytes());
     String rk1 = new String(s1.getRowKey(cal));
     assertEquals("1-" + randomString + "-0", rk1);
-    
+
     when(cal.getTimeInMillis()).thenReturn(10L);
     s1.initialize(e2, "CF".getBytes());
     String rk2 = new String(s1.getRowKey(cal));
     assertEquals("10-" + randomString + "-1", rk2);
-   
+
     when(cal.getTimeInMillis()).thenReturn(100L);
     s2.initialize(e3, "CF".getBytes());
     String rk3 = new String(s2.getRowKey(cal));
     assertEquals("100-" + randomString + "-2", rk3);
-    
+
   }
 
   @Test

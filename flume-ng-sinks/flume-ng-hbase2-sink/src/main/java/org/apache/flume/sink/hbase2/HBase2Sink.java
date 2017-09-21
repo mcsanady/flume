@@ -452,7 +452,7 @@ public class HBase2Sink extends AbstractSink implements Configurable {
     Preconditions.checkNotNull(incs, "List of Increments must not be null");
     // Aggregate all of the increment row/family/column counts.
     // The nested map is keyed like this: {row, family, qualifier} => count.
-    Map<byte[], Map<byte[], NavigableMap<byte[], Long>>> counters = 
+    Map<byte[], Map<byte[], NavigableMap<byte[], Long>>> counters =
         Maps.newTreeMap(Bytes.BYTES_COMPARATOR);
     for (Increment inc : incs) {
       byte[] row = inc.getRow();
@@ -513,7 +513,7 @@ public class HBase2Sink extends AbstractSink implements Configurable {
     qualifiers.merge(qualifier, count, (a, b) -> a + b);
   }
 
-  String getHBbaseVersionString() {
+  String getHBaseVersionString() {
     return VersionInfo.getVersion();
   }
 
@@ -522,7 +522,7 @@ public class HBase2Sink extends AbstractSink implements Configurable {
   }
 
   private boolean hasVersionAtLeast2() {
-    String version = getHBbaseVersionString();
+    String version = getHBaseVersionString();
     try {
       if (this.getMajorVersion(version) >= 2) {
         return true;
