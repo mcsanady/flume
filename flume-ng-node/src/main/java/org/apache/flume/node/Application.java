@@ -41,6 +41,7 @@ import org.apache.flume.lifecycle.LifecycleAware;
 import org.apache.flume.lifecycle.LifecycleState;
 import org.apache.flume.lifecycle.LifecycleSupervisor;
 import org.apache.flume.lifecycle.LifecycleSupervisor.SupervisorPolicy;
+import org.apache.hadoop.util.ShutdownHookManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,6 +61,7 @@ public class Application {
 
   public static final String CONF_MONITOR_CLASS = "flume.monitoring.type";
   public static final String CONF_MONITOR_PREFIX = "flume.monitoring.";
+  public static final int SHUTDOWN_HOOK_PRIORITY = 30;
 
   private final List<LifecycleAware> components;
   private final LifecycleSupervisor supervisor;
@@ -337,12 +339,12 @@ public class Application {
       application.start();
 
       final Application appReference = application;
-      Runtime.getRuntime().addShutdownHook(new Thread("agent-shutdown-hook") {
+      ShutdownHookManager.get().addShutdownHook(new Runnable() {
         @Override
         public void run() {
           appReference.stop();
         }
-      });
+      }, SHUTDOWN_HOOK_PRIORITY);
 
     } catch (Exception e) {
       logger.error("A fatal error occurred while running. Exception follows.", e);
