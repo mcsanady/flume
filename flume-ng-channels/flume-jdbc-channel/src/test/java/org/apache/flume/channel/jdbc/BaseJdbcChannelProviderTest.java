@@ -73,6 +73,8 @@ public abstract class BaseJdbcChannelProviderTest {
 
     derbyCtx.put(ConfigurationConstants.CONFIG_JDBC_SYSPROP_PREFIX
         + "derby.stream.error.file", derbyLogFilePath);
+    derbyCtx.put(ConfigurationConstants.CONFIG_JDBC_SYSPROP_PREFIX
+        + "derby.language.sequence.preallocator", "2147483647");
 
     // Use a temp file to create a temporary directory
     File tempFile = File.createTempFile("temp", "_db", tmpDir);
